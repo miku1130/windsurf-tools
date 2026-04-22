@@ -1,0 +1,273 @@
+package main
+
+import (
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+	"windsurf-tools-wails/backend/models"
+	"windsurf-tools-wails/backend/utils"
+)
+
+// prewarmCandidates 并行预热 top N 候选账号：刷新JWT + 实时查额度，将结果写入 store。
+func (a *App) prewarmCandidates(candidates []models.Account, maxN int) {
+	n := len(candidates)
+	if n > maxN {
+		n = maxN
+	}
+	if n == 0 {
+		return
+	}
+	utils.DLog("[切号] 预热 %d 个候选账号...", n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(acc models.Account) {
+			defer wg.Done()
+			copy := acc
+			a.syncAccountCredentials(&copy)
+			if a.enrichAccountQuotaOnly(&copy) {
+				copy.LastQuotaUpdate = time.Now().Format(time.RFC3339)
+			}
+			_ = a.store.UpdateAccount(copy)
+			if utils.AccountQuotaExhausted(&copy) {
+				utils.DLog("[切号] 预热: %s 额度已耗尽 (daily=%s weekly=%s)", copy.Email, copy.DailyRemaining, copy.WeeklyRemaining)
+			} else {
+				utils.DLog("[切号] 预热: %s 额度OK (daily=%s weekly=%s)", copy.Email, copy.DailyRemaining, copy.WeeklyRemaining)
+			}
+		}(candidates[i])
+	}
+	wg.Wait()
+}
+
+func hasSwitchCredentials(acc *models.Account) bool {
+	if acc == nil {
+		return false
+	}
+	if strings.TrimSpace(acc.Token) != "" {
+		return true
+	}
+	if strings.TrimSpace(acc.WindsurfAPIKey) != "" {
+		return true
+	}
+	if strings.TrimSpace(acc.RefreshToken) != "" {
+		return true
+	}
+	return strings.TrimSpace(acc.Email) != "" && strings.TrimSpace(acc.Password) != ""
+}
+
+func accountEligibleForUsage(acc *models.Account, planFilter string, requireAPIKey bool) bool {
+	if acc == nil {
+		return false
+	}
+	status := strings.TrimSpace(strings.ToLower(acc.Status))
+	if status == "disabled" || status == "expired" {
+		return false
+	}
+	if requireAPIKey && strings.TrimSpace(acc.WindsurfAPIKey) == "" {
+		return false
+	}
+	if !hasSwitchCredentials(acc) {
+		return false
+	}
+	if !utils.PlanFilterMatch(planFilter, acc.PlanName) {
+		return false
+	}
+	return !utils.AccountQuotaExhausted(acc)
+}
+
+func orderedSwitchCandidates(accounts []models.Account, currentID string, planFilter string) []models.Account {
+	var fresh, stale []models.Account
+	for _, acc := range accounts {
+		if acc.ID == currentID {
+			continue
+		}
+		if accountEligibleForUsage(&acc, planFilter, false) {
+			fresh = append(fresh, acc)
+			continue
+		}
+		// 额度数据过期的账号也纳入候选（额度可能已重置），预热阶段会刷新
+		if quotaDataIsStale(&acc) && hasSwitchCredentials(&acc) && utils.PlanFilterMatch(planFilter, acc.PlanName) {
+			status := strings.TrimSpace(strings.ToLower(acc.Status))
+			if status != "disabled" && status != "expired" {
+				stale = append(stale, acc)
+			}
+		}
+	}
+	sort.SliceStable(fresh, func(i, j int) bool {
+		return switchCredentialPriority(fresh[i]) < switchCredentialPriority(fresh[j])
+	})
+	sort.SliceStable(stale, func(i, j int) bool {
+		return switchCredentialPriority(stale[i]) < switchCredentialPriority(stale[j])
+	})
+	// 新鲜的优先，过期数据的排后面
+	return append(fresh, stale...)
+}
+
+// quotaDataIsStale 检查额度数据是否过期（超过重置周期），过期的「已耗尽」账号应参与预热重新检查。
+func quotaDataIsStale(acc *models.Account) bool {
+	if acc == nil {
+		return false
+	}
+	if !utils.AccountQuotaExhausted(acc) {
+		return false // 未耗尽的不算过期
+	}
+	if utils.QuotaRefreshDueAfterOfficialReset(*acc, time.Now()) {
+		return true
+	}
+	raw := strings.TrimSpace(acc.LastQuotaUpdate)
+	if raw == "" {
+		return true // 从未同步过
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return true
+	}
+	// 额度数据超过 4 小时视为过期（日额度每天重置，4h 足以覆盖跨日场景）
+	return time.Since(t) > 4*time.Hour
+}
+
+func orderedMitmCandidates(accounts []models.Account, currentID string, planFilter string) []models.Account {
+	var fresh, stale []models.Account
+	for _, acc := range accounts {
+		if acc.ID == currentID {
+			continue
+		}
+		if accountEligibleForUsage(&acc, planFilter, true) {
+			fresh = append(fresh, acc)
+			continue
+		}
+		if quotaDataIsStale(&acc) && hasSwitchCredentials(&acc) && utils.PlanFilterMatch(planFilter, acc.PlanName) &&
+			strings.TrimSpace(acc.WindsurfAPIKey) != "" {
+			status := strings.TrimSpace(strings.ToLower(acc.Status))
+			if status != "disabled" && status != "expired" {
+				stale = append(stale, acc)
+			}
+		}
+	}
+	sort.SliceStable(fresh, func(i, j int) bool {
+		return switchCredentialPriority(fresh[i]) < switchCredentialPriority(fresh[j])
+	})
+	sort.SliceStable(stale, func(i, j int) bool {
+		return switchCredentialPriority(stale[i]) < switchCredentialPriority(stale[j])
+	})
+	return append(fresh, stale...)
+}
+
+func switchCredentialPriority(acc models.Account) int {
+	switch {
+	case strings.TrimSpace(acc.Token) != "":
+		return 0
+	case strings.TrimSpace(acc.WindsurfAPIKey) != "":
+		return 1
+	case strings.TrimSpace(acc.RefreshToken) != "":
+		return 2
+	case strings.TrimSpace(acc.Email) != "" && strings.TrimSpace(acc.Password) != "":
+		return 3
+	default:
+		return 4
+	}
+}
+
+func pickNextSwitchableAccount(accounts []models.Account, currentID string, planFilter string) (models.Account, error) {
+	candidates := orderedSwitchCandidates(accounts, currentID, planFilter)
+	if len(candidates) == 0 {
+		return models.Account{}, fmt.Errorf("no switchable account")
+	}
+	return candidates[0], nil
+}
+
+func pickNextMitmSwitchableAccount(accounts []models.Account, currentID string, planFilter string) (models.Account, error) {
+	candidates := orderedMitmCandidates(accounts, currentID, planFilter)
+	if len(candidates) == 0 {
+		return models.Account{}, fmt.Errorf("no mitm switchable account")
+	}
+	return candidates[0], nil
+}
+
+func (a *App) prepareAccountForUsage(acc models.Account) (models.Account, error) {
+	utils.DLog("[切号] prepareAccount: %s status=%s hasKey=%v hasToken=%v hasRefresh=%v", acc.Email, acc.Status, acc.WindsurfAPIKey != "", acc.Token != "", acc.RefreshToken != "")
+	if !hasSwitchCredentials(&acc) {
+		return models.Account{}, fmt.Errorf("该账号没有可用凭证")
+	}
+	status := strings.TrimSpace(strings.ToLower(acc.Status))
+	if status == "disabled" || status == "expired" {
+		return models.Account{}, fmt.Errorf("该账号状态为 %s，已跳过", status)
+	}
+
+	// ★ 如果刚预热过（30 秒内），跳过重复 API 调用，直接用缓存数据校验
+	recentlyWarmed := false
+	if t, err := time.Parse(time.RFC3339, acc.LastQuotaUpdate); err == nil && time.Since(t) < 30*time.Second {
+		recentlyWarmed = true
+	}
+	utils.DLog("[切号] prepareAccount: recentlyWarmed=%v", recentlyWarmed)
+
+	before := acc
+	if !recentlyWarmed {
+		a.syncAccountCredentials(&acc)
+		if a.enrichAccountQuotaOnly(&acc) {
+			acc.LastQuotaUpdate = time.Now().Format(time.RFC3339)
+		}
+	}
+
+	if strings.TrimSpace(acc.Token) == "" {
+		utils.DLog("[切号] %s Token为空，凭证同步可能失败", acc.Email)
+		return models.Account{}, fmt.Errorf("该账号无法准备有效 Token（JWT/登录均失败）")
+	}
+	if utils.AccountQuotaExhausted(&acc) {
+		_ = a.store.UpdateAccount(acc)
+		a.syncMitmPoolKeys()
+		utils.DLog("[切号] %s 实时额度已耗尽 (daily=%s weekly=%s)", acc.Email, acc.DailyRemaining, acc.WeeklyRemaining)
+		return models.Account{}, fmt.Errorf("该账号已无可用额度（日=%s 周=%s），已跳过", acc.DailyRemaining, acc.WeeklyRemaining)
+	}
+	utils.DLog("[切号] prepareAccount OK: %s (daily=%s weekly=%s tokenLen=%d)", acc.Email, acc.DailyRemaining, acc.WeeklyRemaining, len(acc.Token))
+	if acc != before {
+		_ = a.store.UpdateAccount(acc)
+	}
+	return acc, nil
+}
+
+func (a *App) rotateMitmToNextAvailable(currentID string, planFilter string) (models.Account, error) {
+	candidates := orderedMitmCandidates(a.store.GetAllAccounts(), currentID, planFilter)
+	utils.DLog("[切号] rotateMitm: currentID=%s filter=%s 候选=%d", currentID[:min(8, len(currentID))], planFilter, len(candidates))
+	if len(candidates) == 0 {
+		return models.Account{}, fmt.Errorf("无可用 MITM 候选账号")
+	}
+
+	// ★ 预热 top N 候选：刷新 JWT + 实时查额度，防止切到实际已耗尽的账号
+	a.prewarmCandidates(candidates, 2)
+
+	// 预热后重读 store，仅保留仍有额度的
+	freshCandidates := orderedMitmCandidates(a.store.GetAllAccounts(), currentID, planFilter)
+	utils.DLog("[切号] rotateMitm: 预热后候选=%d", len(freshCandidates))
+	if len(freshCandidates) == 0 {
+		return models.Account{}, fmt.Errorf("预热后无可用 MITM 候选账号（候选均已耗尽）")
+	}
+
+	var lastErr error
+	for _, acc := range freshCandidates {
+		prepared, err := a.prepareAccountForUsage(acc)
+		if err != nil {
+			utils.DLog("[切号] rotateMitm 跳过 %s: %v", acc.Email, err)
+			lastErr = err
+			continue
+		}
+		apiKey := strings.TrimSpace(prepared.WindsurfAPIKey)
+		if apiKey == "" {
+			lastErr = fmt.Errorf("该账号没有 API Key，已跳过")
+			continue
+		}
+		utils.DLog("[切号] rotateMitm: 切换到 %s (key=%s...)", prepared.Email, apiKey[:min(12, len(apiKey))])
+		if !a.mitmProxy.SwitchToKey(apiKey) {
+			lastErr = fmt.Errorf("MITM 代理未找到目标 API Key")
+			continue
+		}
+		utils.DLog("[切号] rotateMitm 成功切换到 %s", prepared.Email)
+		return prepared, nil
+	}
+	if lastErr != nil {
+		return models.Account{}, lastErr
+	}
+	return models.Account{}, fmt.Errorf("无可用 MITM 候选账号")
+}

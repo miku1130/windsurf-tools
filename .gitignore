@@ -1,0 +1,46 @@
+build/bin
+dist
+node_modules
+frontend/dist
+frontend/node_modules
+
+# 本地归档（含旧版源码 + 147MB zip，勿推）
+备份/
+*.zip
+*.dmg
+
+# 勿提交：含本地调试凭证样例
+test_debug.go
+
+# Cursor / 缓存
+.cursor/
+**/__pycache__/
+*.pyc
+
+# Local / secrets
+.env
+.env.*
+*.local
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
+
+# tools：可能含邮箱、密码、Token、JWT 的本地文件（勿提交）
+tools/**/*.txt
+tools/**/*.csv
+tools/**/*.log
+
+# 调试用测试/二进制
+sniff.exe
+backend/services/*_debug_test.go
+backend/services/*_diag_test.go
+backend/services/*_verify_test.go
+backend/services/*_cmp*_test.go
+
+# 应用数据若误放在仓库根目录
+accounts.json
+settings.json
