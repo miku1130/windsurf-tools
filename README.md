@@ -1,4 +1,4 @@
-# Windsurf Tools 🏄‍♂️
+# Windsurf Tools 🏄‍♂️ (Bug-Fix Fork)
 
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-blue)](#运行环境--prerequisites)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -6,6 +6,18 @@
 
 > **Windsurf IDE 号池 + 纯 MITM 代理一体化工具**
 > Seamless MITM proxy for Windsurf IDE — account pool rotation, billing identity rewrite, quota sync, and a local OpenAI-compatible relay.
+
+> 本仓库修改自原项目 [ytfh423-lab/windsurf-tools](https://github.com/ytfh423-lab/windsurf-tools)，修复了导入账号显示"待补 API Key"的 Bug（详见下方[修复说明](#-本-fork-修复内容)）。
+
+## 💬 交流群
+
+欢迎加入 **AI编程开源技术交流群**，一起讨论 Windsurf Tools 使用、Bug 反馈和开发：
+
+| QQ 群 (1076144676) |
+| :---: |
+| ![QQ群二维码](qrcode_1778121185654.jpg) |
+
+---
 
 基于 [Wails v2](https://wails.io/) (Go + Vue 3) 的桌面工具，为 Windsurf / Codeium IDE 提供：
 
@@ -133,7 +145,13 @@ wails build
 
 ---
 
-## 🔧 最近修复 | Recent Fixes
+## � 本 Fork 修复内容
+
+- **WindsurfPostAuth 缺少 `X-Devin-Auth1-Token` header** — 邮箱密码导入的账号因 `WindsurfPostAuth` 请求缺少必要的 HTTP header，导致 auth1 token 无法交换为 session key，所有账号显示"待补 API Key"且无法获取套餐/额度信息。修复文件：`backend/services/windsurf_postauth.go`
+
+---
+
+## �🔧 最近修复 | Recent Fixes（原项目）
 
 - **F20/F32 计费字段替换** — 修复原先只替换 api_key+JWT 不替换 UserID/TeamID 导致上游 auth 用号池账号但 billing 仍记登录用户的严重 Bug（`proxy_identity.go`）
 - **macOS 26+ CA 信任** — 改用 Terminal.app 交互式 sudo 走 `security add-trusted-cert`，解决 osascript 无法完整授权的问题
