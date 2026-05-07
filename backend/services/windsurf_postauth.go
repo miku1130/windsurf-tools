@@ -27,6 +27,7 @@ func (s *WindsurfService) WindsurfPostAuth(authToken string) (*WindsurfPostAuthR
 	}
 	req.Header.Set("Content-Type", "application/proto")
 	req.Header.Set("Connect-Protocol-Version", "1")
+	req.Header.Set("X-Devin-Auth1-Token", authToken) // 服务端要求通过 header 传递 auth1 token
 	req.Header.Set("Origin", "https://windsurf.com")
 	req.Header.Set("Referer", "https://windsurf.com/account/login")
 	req.Header.Set("User-Agent", "Mozilla/5.0")
