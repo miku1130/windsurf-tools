@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Activity, Globe, HardDriveDownload, Hash, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
+import { Activity, Brain, Globe, HardDriveDownload, Hash, LayoutDashboard, MessageSquare, Settings, Shield, User, Users } from 'lucide-vue-next'
 import { useAccountStore } from '../../stores/useAccountStore'
 import { useMitmStatusStore } from '../../stores/useMitmStatusStore'
 import { PRIMARY_POOL_LABEL, type ShellViewTab } from '../../utils/appMode'
@@ -18,6 +18,7 @@ const menuItems = [
   { id: 'Relay', icon: Globe, label: 'OpenAI Relay' },
   { id: 'Cleanup', icon: HardDriveDownload, label: '清理优化' },
   { id: 'Settings', icon: Settings, label: 'MITM 设置' },
+  { id: 'AgentMonitor', icon: Brain, label: 'Agent 监控' },
 ] satisfies Array<{ id: ShellViewTab; icon: typeof Users; label: string }>
 
 const footerModeLabel = computed(() => 'Pure MITM')

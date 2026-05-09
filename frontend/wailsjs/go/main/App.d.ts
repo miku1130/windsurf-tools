@@ -30,6 +30,8 @@ export function ExportAccountsByGroup(arg1:string):Promise<string>;
 
 export function GetAccount(arg1:string):Promise<models.Account>;
 
+export function GetAgentSystemState():Promise<main.AgentSystemState>;
+
 export function GetAllAccounts():Promise<Array<models.Account>>;
 
 export function GetCaptureDir():Promise<string>;
@@ -75,6 +77,8 @@ export function RefreshAccountQuota(arg1:string):Promise<void>;
 export function RefreshAllQuotas():Promise<Record<string, string>>;
 
 export function RefreshAllTokens():Promise<Record<string, string>>;
+
+export function ResetMachineFingerprint():Promise<void>;
 
 export function SetSilentFromFlag(arg1:boolean):Promise<void>;
 

@@ -48,6 +48,16 @@ type Settings struct {
 	OpenAIRelayPort int `json:"openai_relay_port"`
 	// OpenAIRelaySecret Bearer token 鉴权密钥（空则不鉴权）
 	OpenAIRelaySecret string `json:"openai_relay_secret"`
+
+	// ── 限速拦截 ──
+	// RateLimitInterceptEnabled 启用限速拦截（拦截 CheckUserMessageRateLimit 请求，清除限速响应头）
+	RateLimitInterceptEnabled bool `json:"rate_limit_intercept_enabled"`
+	// RateLimitInterceptCheckUserMessage 拦截 CheckUserMessageRateLimit 请求，返回"未限速"响应
+	RateLimitInterceptCheckUserMessage bool `json:"rate_limit_intercept_check_user_message"`
+	// RateLimitStripHeaders 清除响应中的 x-ratelimit-* 头
+	RateLimitStripHeaders bool `json:"rate_limit_strip_headers"`
+	// RateLimitBypassLocalCache 注入假的限速头，绕过本地限速缓存
+	RateLimitBypassLocalCache bool `json:"rate_limit_bypass_local_cache"`
 }
 
 func DefaultSettings() Settings {
@@ -77,5 +87,10 @@ func DefaultSettings() Settings {
 		OpenAIRelayEnabled:         false,
 		OpenAIRelayPort:            8787,
 		OpenAIRelaySecret:          "",
+		// 限速拦截默认启用
+		RateLimitInterceptEnabled:          true,
+		RateLimitInterceptCheckUserMessage: true,
+		RateLimitStripHeaders:              true,
+		RateLimitBypassLocalCache:          true,
 	}
 }

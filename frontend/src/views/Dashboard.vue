@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import {
   Activity,
   ArrowRight,
+  Fingerprint,
   Globe,
   KeyRound,
   Link2,
@@ -14,6 +15,7 @@ import {
 import PageLoadingSkeleton from "../components/common/PageLoadingSkeleton.vue";
 import SkeletonOverlay from "../components/common/SkeletonOverlay.vue";
 import MitmPanel from "../components/MitmPanel.vue";
+import { APIInfo } from "../api/wails";
 import { useAccountStore } from "../stores/useAccountStore";
 import { useMainViewStore } from "../stores/useMainViewStore";
 import { useMitmStatusStore } from "../stores/useMitmStatusStore";
@@ -29,6 +31,8 @@ const mainView = useMainViewStore();
 const mitmStore = useMitmStatusStore();
 const relayStore = useRelayStatusStore();
 const refreshing = ref(false);
+const resettingFingerprint = ref(false);
+const resetSuccess = ref(false);
 
 const fetchRelayStatus = async () => {
   await relayStore.fetchStatus(true);
@@ -44,6 +48,38 @@ const refreshOverview = async () => {
     ]);
   } finally {
     refreshing.value = false;
+  }
+};
+
+const resetMachineFingerprint = async () => {
+  if (resettingFingerprint.value) return;
+
+  // 确认对话框
+  const confirmed = window.confirm(
+    "确定要重置机器码吗？\n\n" +
+    "此操作将：\n" +
+    "- 删除设备指纹（解决限速问题）\n" +
+    "- 清除认证状态\n\n" +
+    "此操作不会删除聊天记录。\n\n" +
+    "重置后需要重启 Windsurf IDE。"
+  );
+
+  if (!confirmed) return;
+
+  resettingFingerprint.value = true;
+  resetSuccess.value = false;
+
+  try {
+    await APIInfo.resetMachineFingerprint();
+    resetSuccess.value = true;
+    setTimeout(() => {
+      resetSuccess.value = false;
+    }, 5000);
+  } catch (error) {
+    console.error("重置机器码失败:", error);
+    alert("重置失败: " + (error as Error).message);
+  } finally {
+    resettingFingerprint.value = false;
   }
 };
 
@@ -244,19 +280,38 @@ const nextSteps = computed(() => {
               </div>
             </div>
 
-            <button
-              type="button"
-              class="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-2 text-[12px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
-              :disabled="refreshing"
-              @click="refreshOverview"
-            >
-              <RefreshCcw
-                class="h-3.5 w-3.5"
-                :class="refreshing ? 'animate-spin' : ''"
-                stroke-width="2.4"
-              />
-              {{ refreshing ? "刷新中..." : "刷新总览" }}
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                type="button"
+                class="no-drag-region inline-flex items-center gap-2 rounded-full border border-black/[0.06] bg-white/80 px-4 py-2 text-[12px] font-semibold text-ios-text shadow-sm transition-all ios-btn hover:bg-black/[0.04] dark:border-white/[0.08] dark:bg-white/[0.05] dark:text-ios-textDark"
+                :disabled="refreshing"
+                @click="refreshOverview"
+              >
+                <RefreshCcw
+                  class="h-3.5 w-3.5"
+                  :class="refreshing ? 'animate-spin' : ''"
+                  stroke-width="2.4"
+                />
+                {{ refreshing ? "刷新中..." : "刷新总览" }}
+              </button>
+
+              <button
+                type="button"
+                class="no-drag-region inline-flex items-center gap-2 rounded-full border px-4 py-2 text-[12px] font-semibold shadow-sm transition-all ios-btn"
+                :class="resetSuccess
+                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  : 'border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300'"
+                :disabled="resettingFingerprint"
+                @click="resetMachineFingerprint"
+              >
+                <Fingerprint
+                  class="h-3.5 w-3.5"
+                  :class="resettingFingerprint ? 'animate-pulse' : ''"
+                  stroke-width="2.4"
+                />
+                {{ resettingFingerprint ? "重置中..." : resetSuccess ? "重置成功 ✓" : "重置机器码" }}
+              </button>
+            </div>
           </div>
         </div>
 

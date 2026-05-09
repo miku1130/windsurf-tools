@@ -14,6 +14,124 @@ export namespace main {
 	        this.remark = source["remark"];
 	    }
 	}
+	export class AgentInfo {
+	    type: string;
+	    name: string;
+	    status: string;
+	    tasks_handled: number;
+	    error_count: number;
+	    last_active: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.type = source["type"];
+	        this.name = source["name"];
+	        this.status = source["status"];
+	        this.tasks_handled = source["tasks_handled"];
+	        this.error_count = source["error_count"];
+	        this.last_active = source["last_active"];
+	    }
+	}
+	export class WorkflowStep {
+	    name: string;
+	    agent: string;
+	    task_type: string;
+	    next: string[];
+	    on_error: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkflowStep(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.agent = source["agent"];
+	        this.task_type = source["task_type"];
+	        this.next = source["next"];
+	        this.on_error = source["on_error"];
+	    }
+	}
+	export class WorkflowDef {
+	    name: string;
+	    type: string;
+	    description: string;
+	    steps: WorkflowStep[];
+	    start_step: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkflowDef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.type = source["type"];
+	        this.description = source["description"];
+	        this.steps = this.convertValues(source["steps"], WorkflowStep);
+	        this.start_step = source["start_step"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class AgentSystemState {
+	    agents: AgentInfo[];
+	    rate_limit: any;
+	    active_workflow: any;
+	    workflows: WorkflowDef[];
+	    last_update: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AgentSystemState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.agents = this.convertValues(source["agents"], AgentInfo);
+	        this.rate_limit = source["rate_limit"];
+	        this.active_workflow = source["active_workflow"];
+	        this.workflows = this.convertValues(source["workflows"], WorkflowDef);
+	        this.last_update = source["last_update"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class CleanupCategory {
 	    id: string;
 	    name: string;
@@ -176,6 +294,7 @@ export namespace main {
 		    return a;
 		}
 	}
+	
 
 }
 
@@ -261,6 +380,10 @@ export namespace models {
 	    openai_relay_enabled: boolean;
 	    openai_relay_port: number;
 	    openai_relay_secret: string;
+	    rate_limit_intercept_enabled: boolean;
+	    rate_limit_intercept_check_user_message: boolean;
+	    rate_limit_strip_headers: boolean;
+	    rate_limit_bypass_local_cache: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -293,6 +416,10 @@ export namespace models {
 	        this.openai_relay_enabled = source["openai_relay_enabled"];
 	        this.openai_relay_port = source["openai_relay_port"];
 	        this.openai_relay_secret = source["openai_relay_secret"];
+	        this.rate_limit_intercept_enabled = source["rate_limit_intercept_enabled"];
+	        this.rate_limit_intercept_check_user_message = source["rate_limit_intercept_check_user_message"];
+	        this.rate_limit_strip_headers = source["rate_limit_strip_headers"];
+	        this.rate_limit_bypass_local_cache = source["rate_limit_bypass_local_cache"];
 	    }
 	}
 

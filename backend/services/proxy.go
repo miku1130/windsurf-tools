@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"windsurf-tools-wails/backend/models"
 	"windsurf-tools-wails/backend/utils"
 )
 
@@ -25,6 +26,63 @@ var (
 	resolveMu  sync.RWMutex
 	resolveTTL = 5 * time.Minute
 )
+
+// isUsablePublicIP 判断 IP 是否为可用的公网地址。
+// 过滤掉: loopback(127.x)、私网(10.x/172.16-31.x/192.168.x)、
+// Clash TUN 虚假IP(198.18.0.0/15)、CGNAT(100.64-127.x)、link-local(169.254.x)、
+// 保留段(0.x/224+)、IPv6。
+func isUsablePublicIP(ipStr string) bool {
+	// 排除 IPv6
+	if strings.Contains(ipStr, ":") {
+		return false
+	}
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	b0, b1 := ip4[0], ip4[1]
+	// 0.0.0.0/8
+	if b0 == 0 {
+		return false
+	}
+	// 127.0.0.0/8 (loopback)
+	if b0 == 127 {
+		return false
+	}
+	// 10.0.0.0/8 (私网)
+	if b0 == 10 {
+		return false
+	}
+	// 172.16.0.0/12 (私网)
+	if b0 == 172 && b1 >= 16 && b1 <= 31 {
+		return false
+	}
+	// 192.168.0.0/16 (私网)
+	if b0 == 192 && b1 == 168 {
+		return false
+	}
+	// 198.18.0.0/15 — Clash TUN / 基准测试保留段
+	if b0 == 198 && (b1 == 18 || b1 == 19) {
+		return false
+	}
+	// 100.64.0.0/10 (CGNAT)
+	if b0 == 100 && b1 >= 64 && b1 <= 127 {
+		return false
+	}
+	// 169.254.0.0/16 (link-local)
+	if b0 == 169 && b1 == 254 {
+		return false
+	}
+	// 224.0.0.0+ (multicast/reserved)
+	if b0 >= 224 {
+		return false
+	}
+	return true
+}
 
 // ResolveUpstreamIP 动态解析上游 IP，带缓存（TTL 5 分钟），失败时回退硬编码。
 func ResolveUpstreamIP() string {
@@ -46,15 +104,17 @@ func ResolveUpstreamIP() string {
 	ips, err := net.LookupHost(UpstreamHost)
 	if err == nil {
 		for _, ip := range ips {
-			if !strings.HasPrefix(ip, "127.") && !strings.Contains(ip, ":") {
+			if isUsablePublicIP(ip) {
 				resolvedIP = ip
 				resolvedAt = time.Now()
 				log.Printf("[DNS] %s → %s", UpstreamHost, ip)
 				return ip
 			}
 		}
+		// DNS 返回了结果但全是不可用 IP（被代理/VPN劫持）
+		log.Printf("[DNS] %s 解析结果均为不可用IP(代理/TUN劫持): %v，回退 %s", UpstreamHost, ips, UpstreamIP)
 	}
-	// DNS 失败或返回 127.x（已被 hosts 劫持），回退硬编码
+	// DNS 失败或返回不可用IP，回退硬编码
 	if resolvedIP != "" {
 		return resolvedIP // 用上次缓存
 	}
@@ -236,6 +296,9 @@ type MitmProxy struct {
 
 	usageTracker *UsageTracker
 
+	// ── 设置存储 ──
+	store SettingsReader // 用于读取限速拦截等配置
+
 	// ── Session binding (per-conversation sticky routing) ──
 	sessionsMu sync.RWMutex
 	sessionMap map[string]*SessionBinding // conversation_id → binding
@@ -250,6 +313,11 @@ type MitmProxy struct {
 	// 检测到 "global rate limit for trial users" 时设置退避截止时间，
 	// 退避期间 key 选择自动跳过 Trial/Free key，优先使用 Pro/Team key。
 	globalTrialRateLimitUntil time.Time
+}
+
+// SettingsReader 是设置读取接口
+type SettingsReader interface {
+	GetSettings() models.Settings
 }
 
 var injectCodeiumConfigFn = InjectCodeiumConfig
@@ -374,6 +442,13 @@ func NewMitmProxy(windsurfSvc *WindsurfService, logFn func(string), proxyURL str
 		sessionMap:   make(map[string]*SessionBinding),
 		usageTracker: usageTracker,
 	}
+}
+
+// SetStore 设置设置存储（用于读取限速拦截等配置）
+func (p *MitmProxy) SetStore(store SettingsReader) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.store = store
 }
 
 func (p *MitmProxy) syncCurrentAPIKeyToClient(apiKey, reason string) {
@@ -1409,6 +1484,14 @@ func (p *MitmProxy) newReverseProxy() *httputil.ReverseProxy {
 				origHost = h
 			}
 
+			// ★ 限速拦截：检查是否是限速检查请求
+			rateLimitCfg := p.GetRateLimitInterceptConfig()
+			if interceptedResp := p.handleRateLimitInterceptRequest(req, rateLimitCfg); interceptedResp != nil {
+				// 已拦截，设置标记让 ModifyResponse 跳过处理
+				req.Header.Set("X-Mitm-RateLimit-Intercepted", "true")
+				// 注意：这里不能直接返回响应，需要继续设置 URL
+			}
+
 			p.handleRequest(req, origHost)
 			req.URL.Scheme = "https"
 			req.URL.Host = ResolveUpstreamIP()
@@ -1420,7 +1503,19 @@ func (p *MitmProxy) newReverseProxy() *httputil.ReverseProxy {
 			maxRetry: defaultReplayBudget,
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			// ★ 限速拦截：检查是否已拦截
+			if resp.Request.Header.Get("X-Mitm-RateLimit-Intercepted") == "true" {
+				// 已拦截，清除标记并跳过正常处理
+				resp.Request.Header.Del("X-Mitm-RateLimit-Intercepted")
+				return nil
+			}
+
 			p.handleResponse(resp)
+
+			// ★ 限速拦截：处理响应阶段
+			rateLimitCfg := p.GetRateLimitInterceptConfig()
+			p.handleRateLimitInterceptResponse(resp, rateLimitCfg)
+
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, req *http.Request, err error) {
@@ -1436,6 +1531,24 @@ func (p *MitmProxy) serve() {
 		if p.tryServeStaticCache(w, r) {
 			return
 		}
+
+		// ★ 限速拦截：在请求到达代理之前拦截
+		rateLimitCfg := p.GetRateLimitInterceptConfig()
+		if interceptedResp := p.handleRateLimitInterceptRequest(r, rateLimitCfg); interceptedResp != nil {
+			// 直接返回拦截的响应，不转发到上游
+			p.log("★ 限速拦截: 直接返回拦截响应 %s", r.URL.Path)
+			for key, values := range interceptedResp.Header {
+				for _, value := range values {
+					w.Header().Set(key, value)
+				}
+			}
+			w.WriteHeader(interceptedResp.StatusCode)
+			body, _ := io.ReadAll(interceptedResp.Body)
+			interceptedResp.Body.Close()
+			w.Write(body)
+			return
+		}
+
 		proxy.ServeHTTP(w, r)
 	})
 	server := &http.Server{
@@ -2966,7 +3079,7 @@ func classifyUpstreamFailure(grpcStatus, grpcMessage, bodyText string) (upstream
 	if status == "14" || strings.Contains(combined, "provider unreachable") || strings.Contains(combined, "model provider") {
 		return upstreamFailureUnavailable, formatUpstreamFailureDetail(status, msg, bodyText)
 	}
-	if status == "13" || strings.Contains(combined, "internal server error") || strings.Contains(combined, "error number 13") {
+	if status == "13" || strings.Contains(combined, "internal server error") || strings.Contains(combined, "error number 13") || strings.Contains(combined, "internal error occurred") {
 		return upstreamFailureInternal, formatUpstreamFailureDetail(status, msg, bodyText)
 	}
 	if status == "7" || strings.Contains(combined, "permission denied") || strings.Contains(combined, "unauthorized") || strings.Contains(combined, "forbidden") {

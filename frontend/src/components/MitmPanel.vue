@@ -72,6 +72,10 @@ const lastProxyIssue = computed(() => {
     internal: "上游内部错误",
     permission: "权限错误",
     grpc: "gRPC 错误",
+    auth: "认证失败",
+    rate_limit: "频率限制",
+    global_rate_limit: "全局限速",
+    unavailable: "上游不可达",
   };
   return {
     kind: rawKind || "unknown",
@@ -87,9 +91,14 @@ const lastProxyIssueTone = computed(() => {
     case "quota":
       return "border-amber-500/20 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
     case "permission":
+    case "auth":
       return "border-rose-500/20 bg-rose-500/[0.07] text-rose-700 dark:text-rose-300";
     case "internal":
+    case "unavailable":
       return "border-orange-500/20 bg-orange-500/[0.07] text-orange-700 dark:text-orange-300";
+    case "rate_limit":
+    case "global_rate_limit":
+      return "border-amber-500/20 bg-amber-500/[0.07] text-amber-700 dark:text-amber-300";
     default:
       return "border-slate-500/20 bg-slate-500/[0.07] text-slate-700 dark:text-slate-300";
   }

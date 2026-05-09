@@ -6,6 +6,7 @@ import (
 	"log"
 	"sync"
 	"time"
+	"windsurf-tools-wails/backend/agent"
 	"windsurf-tools-wails/backend/services"
 	"windsurf-tools-wails/backend/store"
 	"windsurf-tools-wails/backend/utils"
@@ -31,6 +32,8 @@ type App struct {
 	cleanupMitmOnExitFn    func() error
 	activateExistingAppFn  func()
 	traySupportedFn        func() bool
+	// Agent 编排器
+	orchestrator *agent.Orchestrator
 	// silentFromFlag 由 main 在解析到 --silent 时设置，与 settings.silent_start 二选一即可触发静默启动
 	silentFromFlag bool
 }
@@ -56,6 +59,7 @@ func (a *App) initBackend() error {
 	a.mitmProxy = services.NewMitmProxy(a.windsurfSvc, func(msg string) {
 		utils.DLog("%s", msg)
 	}, "", a.usageTracker)
+	a.mitmProxy.SetStore(a.store) // 设置存储以读取限速拦截配置
 	a.mitmProxy.SetOnKeyExhausted(func(apiKey string) {
 		utils.DLog("[回调] onKeyExhausted 触发: key=%s...", apiKey[:min(12, len(apiKey))])
 		accID := findAccountIDForMITMAPIKey(a.store.GetAllAccounts(), apiKey)
@@ -128,6 +132,10 @@ func (a *App) startup(ctx context.Context) {
 		log.Fatalf("%v", err)
 	}
 	log.Printf("[WindsurfTools] desktop backend initialized")
+
+	// 启动 Agent 编排器
+	a.initAgent()
+
 	if a.supportsTray() {
 		a.startTray()
 		log.Printf("[WindsurfTools] tray initialized")
@@ -147,6 +155,8 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	log.Printf("[WindsurfTools] desktop shutdown requested")
+	// 停止 Agent 编排器
+	a.stopAgent()
 	if a.cancelAutoRefresh != nil {
 		a.cancelAutoRefresh()
 	}

@@ -3,12 +3,14 @@ package services
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -35,9 +37,20 @@ type WindsurfService struct {
 
 func NewWindsurfService(proxyURL string) *WindsurfService {
 	jar, _ := cookiejar.New(nil)
+	// 自定义 DialContext：当连接 gRPC 上游域名时，绕过系统 DNS 使用 ResolveUpstreamIP()。
+	// 这样 URL 中可以保留域名（确保 TLS SNI 正确），同时不受 Clash TUN 的 DNS 劫持影响。
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	transport := &http.Transport{
 		TLSClientConfig:   &tls.Config{InsecureSkipVerify: true},
 		ForceAttemptHTTP2: true,
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			host, port, _ := net.SplitHostPort(addr)
+			// 对 gRPC 上游域名，强制使用已解析的公网 IP
+			if host == GRPCUpstreamHost {
+				addr = net.JoinHostPort(ResolveUpstreamIP(), port)
+			}
+			return dialer.DialContext(ctx, network, addr)
+		},
 	}
 	if proxyURL != "" {
 		if u, err := url.Parse(proxyURL); err == nil {
@@ -359,7 +372,8 @@ func (s *WindsurfService) GetPlanStatus(token string) (map[string]interface{}, e
 // ── gRPC 直连获取 JWT (sk-ws-* API Key) ──
 
 func (s *WindsurfService) GetJWTByAPIKey(apiKey string) (string, error) {
-	connectURL := fmt.Sprintf("https://%s/exa.auth_pb.AuthService/GetUserJwt", ResolveUpstreamIP())
+	// 使用域名 URL（DialContext 自动解析为公网 IP，绕过 Clash TUN DNS 劫持，保留 TLS SNI）
+	connectURL := fmt.Sprintf("https://%s/exa.auth_pb.AuthService/GetUserJwt", GRPCUpstreamHost)
 	metadata := buildAPIKeyMetadata(apiKey)
 
 	// Connect 协议：F1 嵌套 metadata 子消息，无 gRPC 5 字节帧头
@@ -372,7 +386,6 @@ func (s *WindsurfService) GetJWTByAPIKey(apiKey string) (string, error) {
 	req.Header.Set("Content-Type", "application/proto")
 	req.Header.Set("Connect-Protocol-Version", "1")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Host = GRPCUpstreamHost // 关键：必须用 req.Host 而不是 Header.Set
 
 	resp, err := s.client.Do(req)
 	if err != nil {
@@ -473,7 +486,8 @@ func (s *WindsurfService) GetPlanStatusJSON(token string) (*AccountProfile, erro
 
 func (s *WindsurfService) GetUserStatus(apiKey string) (*AccountProfile, error) {
 	// Connect unary (application/proto, 无 gRPC envelope)——匹配 IDE 2.x 的实际行为。
-	connectURL := fmt.Sprintf("https://%s/exa.seat_management_pb.SeatManagementService/GetUserStatus", ResolveUpstreamIP())
+	// 使用域名 URL（DialContext 自动解析为公网 IP，绕过 Clash TUN DNS 劫持，保留 TLS SNI）
+	connectURL := fmt.Sprintf("https://%s/exa.seat_management_pb.SeatManagementService/GetUserStatus", GRPCUpstreamHost)
 	metadata := buildAPIKeyMetadata(apiKey)
 
 	// Body: F1 嵌套 metadata 子消息（与 GetJWTByAPIKey 一致）
@@ -490,7 +504,6 @@ func (s *WindsurfService) GetUserStatus(apiKey string) (*AccountProfile, error) 
 	req.Header.Set("Connect-Protocol-Version", "1")
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Host = GRPCUpstreamHost
 
 	resp, err := s.client.Do(req)
 	if err != nil {

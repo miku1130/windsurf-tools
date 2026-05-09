@@ -1,4 +1,5 @@
-build/bin
+build/bin/
+build/*.exe
 dist
 node_modules
 frontend/dist
@@ -33,6 +34,8 @@ Thumbs.db
 tools/**/*.txt
 tools/**/*.csv
 tools/**/*.log
+tools/**/*.json
+tools/**/last_report.json
 
 # 调试用测试/二进制
 sniff.exe

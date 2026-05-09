@@ -40,6 +40,7 @@ const viewLoaders: Record<ShellViewTab, () => Promise<AsyncViewModule>> = {
   Relay: () => import("./views/Relay.vue"),
   Cleanup: () => import("./views/Cleanup.vue"),
   Settings: () => import("./views/Settings.vue"),
+  AgentMonitor: () => import("./views/AgentMonitor.vue"),
 };
 
 const preloadedViews = new Set<ShellViewTab>();
@@ -68,6 +69,10 @@ const viewRegistry = {
   Settings: {
     component: defineAsyncComponent(viewLoaders.Settings),
     skeleton: "settings",
+  },
+  AgentMonitor: {
+    component: defineAsyncComponent(viewLoaders.AgentMonitor),
+    skeleton: "dashboard",
   },
 } as const;
 

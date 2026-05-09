@@ -238,7 +238,8 @@ func ClassifyConnectError(ce ConnectErrorResult) (upstreamFailureKind, string) {
 	}
 
 	// Priority 6: Internal
-	if code == "internal" {
+	// code=internal 或消息含 "internal error"（常见于 code=unknown/invalid_argument/not_found 的后端内部错误）
+	if code == "internal" || strings.Contains(msgLower, "internal error") {
 		return upstreamFailureInternal, formatConnectDetail(ce)
 	}
 

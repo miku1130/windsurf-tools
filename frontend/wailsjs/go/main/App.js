@@ -54,6 +54,10 @@ export function GetAccount(arg1) {
   return window['go']['main']['App']['GetAccount'](arg1);
 }
 
+export function GetAgentSystemState() {
+  return window['go']['main']['App']['GetAgentSystemState']();
+}
+
 export function GetAllAccounts() {
   return window['go']['main']['App']['GetAllAccounts']();
 }
@@ -144,6 +148,10 @@ export function RefreshAllQuotas() {
 
 export function RefreshAllTokens() {
   return window['go']['main']['App']['RefreshAllTokens']();
+}
+
+export function ResetMachineFingerprint() {
+  return window['go']['main']['App']['ResetMachineFingerprint']();
 }
 
 export function SetSilentFromFlag(arg1) {

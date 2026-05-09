@@ -78,4 +78,10 @@ export const APIInfo = {
   applyPerformanceFix: AppHooks.ApplyPerformanceFix,
   applyAllPerformanceFixes: AppHooks.ApplyAllPerformanceFixes,
   getWindsurfProcessInfo: AppHooks.GetWindsurfProcessInfo,
+
+  // 机器码重置
+  resetMachineFingerprint: AppHooks.ResetMachineFingerprint,
+
+  // Agent 编排器
+  getAgentSystemState: AppHooks.GetAgentSystemState,
 };
